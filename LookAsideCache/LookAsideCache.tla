@@ -1,44 +1,73 @@
 --------------------------- MODULE LookAsideCache ---------------------------
 
-EXTENDS Naturals, Sequences, Store
-(*
-VARIABLES cliCtlRead, cliReadBuf, cliReadHistory, cliCacheCtl, cliCacheBuf, cliCtlWrite
-VARIABLES cache, truth
+EXTENDS Naturals, Sequences, TLC
 
+CONSTANT Val, Proc, Clock
 
+VARIABLES store
+VARIABLES gotval, cctl, cbuf
+VARIABLES cache
+  
+M == INSTANCE Store
+
+PrintVal(id, exp) == Print(<<id, exp>>, TRUE)
 
 TypeInvariant == 
-    /\ cliCtlRead \in [Proc -> {"rdy", "busy", "wait", "done"}]
-    /\ cliReadBuf \in [Proc -> Nat \cup NoVal]
-    /\ cliReadHistory \in [Proc -> Seq(Nat)]
-    /\ cliCtlWrite \in {"rdy", "wrtrue", "invalidcache"}
-    /\ cache \in Nat
-    /\ truth \in Nat
-    /\ cacheCtl  \in [Proc -> {"rdy", "busy", "done"}]
-    
-CliReadReq(p) == 
-    /\ cliCtlRead[p] = "rdy"
-    /\ cliCtlRead' = [cliCtlRead' EXCEPT ![p] = "busy"]
-    /\ UNCHANGED << cliReadBuf, cliReadHistory, cliCtlWrite, cache, truth, cliCacheCtl, cliCacheBuf>>
+    /\ store \in M!StoreValSet
+    /\ cctl \in [Proc -> {"rdy", "wait", "cachemiss", "write_cache", "done"}]
+    /\ cbuf \in [Proc ->  M!StoreValSet \cup {M!NoVal}]
+    /\ gotval \in [Proc -> M!GotValSet]
+    /\ cache \in M!StoreValSet \cup {M!NoVal}
 
 
-CliDoRead(p) ==
-    /\ cliCtlRead[p] = "busy"
-    /\ cache # NoVal /\ cliReadBuf' = [ cliReadBuf EXCEPT ![p]=cache ] /\ cliCtlRead' = "done"
-    /\ UNCHANGED << cliReadHistory, cliCtlWrite, cache, truth >>
-    
-cliReadMiss(p) == 
-    /\ cliCtlRead[p] = "busy" /\ cache = NoVal
-    /\ cliCtlRead' = [cliCtlRead EXCEPT ![p] = "wait"]  
-    /\ cliCacheCtl' = [cliCacheCtl EXCEPT ![p] = "busy"]
-    /\ UNCHANGED << cliReadBuf, cliReadHi >>
-    
- 
-*)
 
- 
+ProcStartRead(p) ==
+    /\ M!SReadReq(p)
+    /\ UNCHANGED << cache >>
+    
+ProcReadCache(p) ==
+    /\ cctl[p] = "wait"
+    /\ IF cache # M!NoVal THEN
+         /\ cbuf' = [cbuf EXCEPT ![p] = cache]
+         /\ cctl' = [cctl EXCEPT ![p] = "done"]
+         /\ UNCHANGED << store, gotval, cache>>
+       ELSE
+         /\ cctl' = [cctl EXCEPT ![p] = "cachemiss"]
+         /\ UNCHANGED << store, gotval, cbuf, cache >>
+         
+ProcCacheMiss(p) == 
+    /\ cctl[p] = "cachemiss"
+    /\ cbuf' = [cbuf EXCEPT ![p] = store]
+    /\ cctl' = [cctl EXCEPT ![p] = "write_cache"]
+    /\ UNCHANGED << store, gotval, cache >>
+    
+ProcWriteCache(p) == 
+    /\ cctl[p] = "write_cache"
+    /\ cache' = cbuf[p]
+    /\ cctl' = [cctl EXCEPT ![p] = "done"]
+    /\ UNCHANGED << gotval, store, cbuf >>
+
+ProcReadDone(p) == 
+    /\ M!SReadRsp(p)
+    /\ PrintVal("gotval", gotval[p]) 
+    /\ UNCHANGED << cache >>
+    
+ProcRead(p) == ProcStartRead(p) \/ ProcReadCache(p) \/ ProcCacheMiss(p) \/ ProcWriteCache(p) \/ ProcReadDone(p)
+
+Write ==
+    /\ M!SWr
+    /\ cache' = M!NoVal
+    
+
+Init ==  M!SInit /\ cache = M!NoVal
+
+Next ==  Write \/  (\E p \in Proc: ProcRead(p))
+
+Spec == Init /\ [][Next]_<<gotval, store, cctl, cbuf, cache>>
+
+
 
 =============================================================================
 \* Modification History
-\* Last modified Tue Aug 21 20:54:39 CST 2018 by UCloud
+\* Last modified Tue Sep 04 10:20:24 CST 2018 by UCloud
 \* Created Wed Aug 15 18:53:32 CST 2018 by UCloud
